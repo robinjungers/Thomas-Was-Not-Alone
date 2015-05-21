@@ -14,9 +14,14 @@
 
 //Constantes
 #define GRAVITY 0.006
-#define MOVE 0.05
+#define STEP 0.05
 #define TRUE 1
 #define FALSE 0
+
+#define UP 0
+#define RIGHT 1
+#define DOWN 2
+#define LEFT 3
 
 typedef struct Vector {
 	float x;
@@ -38,10 +43,10 @@ typedef struct Character {
 	Vector vel, acc;
 	Color color;
 	float jumpPower;
-	char isSelected;
-	char isOnGround;
-	struct Character * onTop;
-	char canJump;
+	int isSelected;
+	int isOnGround;
+	struct Character * parent;
+	int canJump;
 } Character;
 
 typedef struct Scene {
@@ -90,36 +95,37 @@ void drawRect( Bloc bloc ) {
 	glPopMatrix();
 }
 
-Scene * makeScene( void ) {
-	Scene * scene = NULL;
+Scene * makeScene( int nbPlatforms, int nbCharacters ) {
+	Scene * scene = (Scene*) calloc( 1, sizeof(Scene));
 	
-	scene->numberOfPlatforms = 5;
-	scene->numberOfCharacters = 3;
-	scene->numberOfPlatforms = 2;
+	scene->numberOfBlocs = nbCharacters + nbPlatforms;
+	scene->numberOfCharacters = nbCharacters;
+	scene->numberOfPlatforms = nbPlatforms;
 	
-	scene->blocs = (Bloc*) calloc( 5, sizeof(Bloc) );
-	scene->characters = (Character*) calloc( 3, sizeof(Character) );
+	scene->blocs = (Bloc*) calloc( scene->numberOfBlocs, sizeof(Bloc) );
+	scene->characters = (Character*) calloc( scene->numberOfCharacters, sizeof(Character) );
 	
 	return scene;
 }
 
 int checkCollision( int side, Vector posObj, Vector sizeObj, Vector posRef, Vector sizeRef ) {
 	switch (side) {
-		case 0: // Haut
-		
+		case UP: // Haut
+		if ( ( posObj.x + sizeObj.x > posRef.x ) && ( posObj.x < posRef.x + sizeRef.x ) && ( posObj.y + sizeObj.y > posRef.y ) && ( posObj.y < posRef.y ) )
+			return TRUE;
 		break;
 		
-		case 1: // Droite
+		case RIGHT: // Droite
 		if ( ( posObj.y + sizeObj.y > posRef.y ) && ( posObj.y < posRef.y + sizeRef.y ) && ( posObj.x + sizeObj.x > posRef.x ) && ( posObj.x < posRef.x ) )
 			return TRUE;
 		break;
 		
-		case 2: // Bas
+		case DOWN: // Bas
 		if ( ( posObj.x + sizeObj.x > posRef.x ) && ( posObj.x < posRef.x + sizeRef.x ) && ( posObj.y < posRef.y + sizeRef.y ) && ( posObj.y > posRef.y ) )
 			return TRUE;
 		break;
 		
-		case 3: // Gauche
+		case LEFT: // Gauche
 		if ( ( posObj.y + sizeObj.y > posRef.y ) && ( posObj.y < posRef.y + sizeRef.y ) && ( posObj.x < posRef.x + sizeRef.x ) && ( posObj.x > posRef.x ) )
 			return TRUE;
 		break;
@@ -132,25 +138,29 @@ void initBlocs( Scene * scene ) {
 	int i;
 	//Remplissage des personnages
 	i = 0;
-	scene->blocs[i].pos = { 0.0, 3.0 };
-	scene->blocs[i].size = { 0.2, 1.0 };
+	scene->blocs[i].pos = (Vector) { 0.0, 3.0 };
+	scene->blocs[i].size = (Vector) { 0.2, 1.0 };
 	
 	i = 1;
-	scene->blocs[i].pos = { -3.0, 3.0 };
-	scene->blocs[i].size = { 0.6, 0.6 };
+	scene->blocs[i].pos = (Vector) { -3.0, 3.0 };
+	scene->blocs[i].size = (Vector) { 0.6, 0.6 };
 	
 	i = 2;
-	scene->blocs[i].pos = { 3.0, 3.0 };
-	scene->blocs[i].size= { 0.4, 0.8 };
+	scene->blocs[i].pos = (Vector) { 3.0, 3.0 };
+	scene->blocs[i].size= (Vector) { 0.4, 0.8 };
 	
 	//Remplissage du terrain
 	i = 3;
-	scene->blocs[i].pos = { -5.0, -3.0 };
-	scene->blocs[i].size = { 10.0, 2.0 };
+	scene->blocs[i].pos = (Vector) { -5.0, -3.0 };
+	scene->blocs[i].size = (Vector) { 10.0, 2.0 };
 	
 	i = 4;
-	scene->blocs[i].pos = { 2.0, -2.0 };
-	scene->blocs[i].size = { 2.0, 4.0 };
+	scene->blocs[i].pos = (Vector) { 2.0, -2.0 };
+	scene->blocs[i].size = (Vector) { 2.0, 4.0 };
+	
+	i = 5;
+	scene->blocs[i].pos = (Vector) { -3.0, 0.0 };
+	scene->blocs[i].size = (Vector) { 2.0, 2.0 };
 }
 
 void initCharacters( Scene * scene ) {
@@ -158,70 +168,76 @@ void initCharacters( Scene * scene ) {
 	//Remplissage de l'équipage
 	i = 0;
 	scene->characters[i].name = "Louise";
-	scene->characters[i].(*bloc) = &blocs[i];
-	scene->characters[i].vel = { 0.0, 0.0 };
-	scene->characters[i].acc = { 0.0, 0.0 };
-	scene->characters[i].color = { 200, 150, 150 };
+	scene->characters[i].bloc = &scene->blocs[i];
+	scene->characters[i].vel = (Vector) { 0.0, 0.0 };
+	scene->characters[i].acc = (Vector) { 0.0, 0.0 };
+	scene->characters[i].color = (Color) { 200, 150, 150 };
 	scene->characters[i].isSelected = TRUE;
-	scene->characters[i].jumpPower = 0.15;
-	scene->characters[i].isOnGround = 0;
-	scene->characters[i].onTop = NULL;
-	scene->characters[i].canJump = 1;
+	scene->characters[i].jumpPower = 0.2;
+	scene->characters[i].isOnGround = FALSE;
+	scene->characters[i].parent = NULL;
+	scene->characters[i].canJump = TRUE;
 	
 	i = 1;
 	scene->characters[i].name = "Nino";
-	scene->characters[i].(*bloc) = &blocs[i];
-	scene->characters[i].vel.x = { 0.0, 0.0 };
-	scene->characters[i].acc.x = { 0.0, 0.0 };
-	scene->characters[i].color = { 150, 110, 110 };
+	scene->characters[i].bloc = &scene->blocs[i];
+	scene->characters[i].vel = (Vector) { 0.0, 0.0 };
+	scene->characters[i].acc = (Vector) { 0.0, 0.0 };
+	scene->characters[i].color = (Color) { 150, 110, 110 };
 	scene->characters[i].isSelected = FALSE;
-	scene->characters[i].jumpPower = 0.07;
-	scene->characters[i].isOnGround = 0;
-	scene->characters[i].onTop = NULL;
-	scene->characters[i].canJump = 1;
+	scene->characters[i].jumpPower = 0.1;
+	scene->characters[i].isOnGround = FALSE;
+	scene->characters[i].parent = NULL;
+	scene->characters[i].canJump = TRUE;
 	
 	i = 2;
 	scene->characters[i].name = "Timour";
-	scene->characters[i].(*bloc) = &blocs[i];
-	scene->characters[i].vel.x = { 0.0, 0.0 };
-	scene->characters[i].acc.x = { 0.0, 0.0 };
-	scene->characters[i].color = { 220, 190, 190 };
+	scene->characters[i].bloc = &scene->blocs[i];
+	scene->characters[i].vel = (Vector) { 0.0, 0.0 };
+	scene->characters[i].acc = (Vector) { 0.0, 0.0 };
+	scene->characters[i].color = (Color) { 220, 190, 190 };
 	scene->characters[i].isSelected = FALSE;
-	scene->characters[i].jumpPower = 0.1;
-	scene->characters[i].isOnGround = 0;
-	scene->characters[i].onTop = NULL;
-	scene->characters[i].canJump = 1;
+	scene->characters[i].jumpPower = 0.15;
+	scene->characters[i].isOnGround = FALSE;
+	scene->characters[i].parent = NULL;
+	scene->characters[i].canJump = TRUE;
 }
 
 void displayPlatforms( Scene * scene ) {
 	int i;
 	//Dessin du tableau
 	glColor3ub( 0, 0, 0 );
-	for ( i=scene->numberOfCharacters-1; i<scene->numberOfBlocs; i++ )
+	for ( i=scene->numberOfCharacters; i<scene->numberOfBlocs; i++ )
 		drawRect( scene->blocs[i] );
 }
 
 void displayCharacters( Scene * scene, Controler * controler ) {
 	int i, j;
+	// Définition de raccourcis pour la suite
 	Character * C = scene->characters;
-	Blocs * B = scene->blocs;
-	for ( i=0; i<numberOfCharacters; i++ ) {
-		if ( controler->tab == i )
-			C[i].isSelected = 1;
-		else
-			C[i].isSelected = 0;
+	Bloc * B = scene->blocs;
+	
+	// Début de boucle sur tous les personnages
+	for ( i=0; i<scene->numberOfCharacters; i++ ) {
 		
+		// Gestion du selecteur de personnage
+		if ( controler->tab == i )
+			C[i].isSelected = TRUE;
+		else
+			C[i].isSelected = FALSE;
+		
+		// Si un personnage est sélectionné
 		if ( C[i].isSelected ) {
 
 			//Gestion commande droite
 			if ( controler->right ) {
-				C[i].pos.x += MOVE;
+				C[i].bloc->pos.x += STEP;
 				j = 0;
-				int collided = 0;
-				while ( !collided && j<sizeScene ) {
-					if ( checkCollision( 1, C[i].pos, C[i].size, B[j].pos, B[j].size ) ) {
-						collided = 1;
-						C[i].pos.x -= MOVE;
+				int collided = FALSE;
+				while ( !collided && j<scene->numberOfBlocs ) {
+					if ( j!=i && checkCollision( RIGHT, C[i].bloc->pos, C[i].bloc->size, B[j].pos, B[j].size ) ) {
+						collided = TRUE;
+						C[i].bloc->pos.x -= STEP;
 					}
 					j++;
 				}
@@ -229,13 +245,13 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 			
 			//Gestion commande gauche
 			if ( controler->left ) {
-				C[i].pos.x -= MOVE;
+				C[i].bloc->pos.x -= STEP;
 				j = 0;
-				int collided = 0;
-				while ( !collided && j<sizeScene ) {
-					if ( checkCollision( 3, C[i].pos, C[i].size, B[j].pos, B[j].size ) ) {
-						collided = 1;
-						C[i].pos.x += MOVE;
+				int collided = FALSE;
+				while ( !collided && j<scene->numberOfBlocs ) {
+					if ( j!=i && checkCollision( LEFT, C[i].bloc->pos, C[i].bloc->size, B[j].pos, B[j].size ) ) {
+						collided = TRUE;
+						C[i].bloc->pos.x += STEP;
 					}
 					j++;
 				}
@@ -243,25 +259,42 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 			
 			//Gestion commande haut
 			if ( controler->up && C[i].isOnGround ) {
-				C[i].isOnGround = 0;
+				C[i].isOnGround = FALSE;
 				C[i].vel.y = C[i].jumpPower;
 			}
 		}
 		
+		
+		
+		
 		//Gestion vitesse
-		C[i].vel.x += characters[i].acc.x;		C[i].vel.y += C[i].acc.y;
-		C[i].pos.x += characters[i].vel.x;		C[i].pos.y += C[i].vel.y;
+		C[i].vel.x += C[i].acc.x;			C[i].vel.y += C[i].acc.y;
+		C[i].bloc->pos.x += C[i].vel.x;		C[i].bloc->pos.y += C[i].vel.y;
 		
 		//Gestion gravité
 		j = 0;
-		C[i].isOnGround = 0;
-		while ( !C[i].isOnGround && j<sizeScene ) {
-			if ( checkCollision( 2, C[i].pos, C[i].size, B[j].pos, B[j].size ) ) {
-				C[i].isOnGround = 1;
+		C[i].isOnGround = FALSE;
+		while ( !C[i].isOnGround && j<scene->numberOfBlocs ) {
+			
+			// Si collision par le haut
+			if ( j!=i && checkCollision( UP, C[i].bloc->pos, C[i].bloc->size, B[j].pos, B[j].size ) ) {
 				C[i].acc.y = 0;
 				C[i].vel.y = 0;
-				C[i].pos.y = B[j].pos.y + B[j].size.y;
-			} else
+				C[i].bloc->pos.y = B[j].pos.y - C[i].bloc->size.y;
+				if ( j<scene->numberOfCharacters )
+					C[j].parent = &C[i];
+			}
+			
+			// Si collision par le bas
+			else if ( j!=i && checkCollision( DOWN, C[i].bloc->pos, C[i].bloc->size, B[j].pos, B[j].size ) ) {
+				C[i].isOnGround = TRUE;
+				C[i].acc.y = 0;
+				C[i].vel.y = 0;
+				C[i].bloc->pos.y = B[j].pos.y + B[j].size.y;
+			}
+			
+			// Sinon, chute
+			else
 				C[i].acc.y = -GRAVITY;
 			
 			j++;
@@ -270,11 +303,14 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 		//Dessin du personnage
 		if ( C[i].isSelected ) {
 			glColor3ub( 0, 0, 0 );
-			Bloc selector = { C[i].pos.x + C[i].size.x/2 - 0.05, C[i].pos.y + C[i].size.y + 0.1, 0.1, 0.1 };
+			Bloc selector = { 
+				(Vector) { C[i].bloc->pos.x + C[i].bloc->size.x/2 - 0.05, C[i].bloc->pos.y + C[i].bloc->size.y + 0.1 },
+				(Vector) { 0.1, 0.1 }
+			};
 			drawRect( selector );
 		}
 		glColor3ub( C[i].color.R, C[i].color.G, C[i].color.B );
-		drawRect( C[i] );
+		drawRect( *(C[i].bloc) );
 	}
 }
 
@@ -295,10 +331,10 @@ int main(int argc, char** argv) {
 	//Variables Gameplay
 	Controler controler = { 0, 0, 0, 0, 0, 0 };
 	Controler controlerPast = { 0, 0, 0, 0, 0, 0 };
-	Scene * scene = makeScene();
+	Scene * scene = makeScene( 3, 3 );
 	
 	//Initialisation des variables Techniques
-	font = TTF_OpenFont( "sources/lekton_regular.ttf", 16 );
+	font = TTF_OpenFont( "fonts/lekton_regular.ttf", 16 );
 	textSurface = TTF_RenderText_Blended( font, "Thomas Was Alone, The Game", fontColor );
 	textRect.x = windowWidth / 2;	textRect.y = windowHeight /2;
 	textRect.w = textSurface->w;	textRect.h = textSurface->h;
@@ -308,11 +344,11 @@ int main(int argc, char** argv) {
 	initCharacters( scene );
 	
 	//Gestion Anti aliasing
-	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 6);
+	SDL_GL_SetAttribute( SDL_GL_MULTISAMPLEBUFFERS, 1 );
+	SDL_GL_SetAttribute( SDL_GL_MULTISAMPLESAMPLES, 6 );
 	
 	mainScreen = SDL_SetVideoMode( windowWidth, windowHeight, 32, SDL_OPENGL );
-	SDL_WM_SetCaption("Thomas Was Alone V1.0", NULL);
+	SDL_WM_SetCaption("Thomas Was Alone V2.0", NULL);
 	
 	//Gestion matrice d'affichage
 	glViewport( 0, 0, windowWidth, windowHeight );
@@ -333,10 +369,10 @@ int main(int argc, char** argv) {
 		
 		/////////////////////////////////////* DEBUT DESSIN *///////////////////////////////////////
 		
-		glRotatef( -1, 0.0, 0.0, 1.0 );
+		//glRotatef( -1, 0.0, 0.0, 1.0 );
 		
-		getControls( &controler, &controlerPast, key, numberOfCharacters );
-		displayPlatforms( blocs, sizeScene );
+		getControls( &controler, &controlerPast, key, scene->numberOfCharacters );
+		displayPlatforms( scene );
 		displayCharacters( scene, &controler );
 
 
@@ -366,8 +402,8 @@ int main(int argc, char** argv) {
 	}
 	
 	//Fermeture des variables GamePlay
-	free( blocs );
-	free( characters );
+	//free( scene->blocs );
+	//free( scene->characters );
 	
 	//Fermeture des variables Techniques
 	SDL_FreeSurface( textSurface );
