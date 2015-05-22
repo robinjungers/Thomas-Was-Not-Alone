@@ -1,6 +1,5 @@
 #include <SDL/SDL.h>
 #include <SDL/SDL_image.h>
-#include <SDL/SDL_ttf.h>
 #ifdef __APPLE__
 	#include <OpenGL/gl.h>
 	#include <OpenGL/glu.h>
@@ -84,6 +83,10 @@ void ease( float * base, float target, float step ) {
 		*base -= pow( *base - target, step );
 }
 
+float dist( Vector A, Vector B ) {
+	return sqrt( pow( A.x-B.x, 2 ) + pow( A.y-B.y, 2 ) );
+}
+
 void drawRect( Bloc bloc ) {
 	glPushMatrix();
 		glTranslatef( bloc.pos.x, bloc.pos.y, 0.0 );
@@ -107,6 +110,40 @@ Scene * makeScene( int nbPlatforms, int nbCharacters ) {
 	scene->characters = (Character*) calloc( scene->numberOfCharacters, sizeof(Character) );
 	
 	return scene;
+}
+
+GLuint makeImage( const char * filename ) {
+	SDL_Surface * image = IMG_Load( filename );
+	if ( image==NULL ) {
+		printf("Error loading texture.\n");
+		return EXIT_FAILURE;
+	}
+	GLuint textureId;
+	glGenTextures( 1, &textureId );
+	glBindTexture( GL_TEXTURE_2D, textureId );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	
+	GLenum format;
+	switch(image->format->BytesPerPixel) {
+		case 1:
+			format = GL_RED;
+			break;
+		case 3:
+			format = GL_BGR;
+			break;
+		case 4:
+			format = GL_BGRA;
+			break;
+		default:
+			fprintf(stderr, "Format des pixels de l'image non pris en charge\n");
+		return EXIT_FAILURE;
+	}
+	
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, image->w, image->h, 0, format, GL_UNSIGNED_BYTE, image->pixels );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	SDL_FreeSurface( image );
+	
+	return textureId;
 }
 
 int checkCollision( int side, Bloc obj, Bloc ref ) {
@@ -133,10 +170,6 @@ int checkCollision( int side, Bloc obj, Bloc ref ) {
 	}
 	
 	return FALSE;
-}
-
-void handleCollision( int side, Bloc blocToMove ) {
-	
 }
 
 void initBlocs( Scene * scene ) {
@@ -241,32 +274,20 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 		// Si un personnage est sélectionné
 		if ( C[i].isSelected ) {
 
-// ***************************************** GESTION COMMANDE DROITE *****************************************
-			if ( controler->right ) {
+// ******************************************** GESTION COMMANDES ********************************************
+			if ( controler->right )
 				C[i].bloc->pos.x += STEP;
-				j = 0;
-				int collided = FALSE;
-				while ( !collided && j<scene->numberOfBlocs ) {
-					if ( j!=i && checkCollision( RIGHT, *(C[i].bloc), B[j] ) ) {
-						collided = TRUE;
-						C[i].bloc->pos.x = C[i].bloc->previousPos.x;
-					}
-					j++;
-				}
-			}
+			if ( controler->left )
+				C[i].bloc->pos.x -= STEP;	
 			
-// ***************************************** GESTION COMMANDE GAUCHE *****************************************
-			if ( controler->left ) {
-				C[i].bloc->pos.x -= STEP;
-				j = 0;
-				int collided = FALSE;
-				while ( !collided && j<scene->numberOfBlocs ) {
-					if ( j!=i && checkCollision( LEFT, *(C[i].bloc), B[j] ) ) {
-						collided = TRUE;
-						C[i].bloc->pos.x = C[i].bloc->previousPos.x;
-					}
-					j++;
+			j = 0;
+			int collided = FALSE;
+			while ( !collided && j<scene->numberOfBlocs ) {
+				if ( j!=i && ( checkCollision( RIGHT, *(C[i].bloc), B[j] ) || checkCollision( LEFT, *(C[i].bloc), B[j] ) )) {
+					collided = TRUE;
+					C[i].bloc->pos.x = C[i].bloc->previousPos.x;
 				}
+				j++;
 			}
 			
 			
@@ -276,8 +297,6 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 				C[i].vel.y = C[i].jumpPower;
 			}
 		}
-		
-		
 		
 		
 // ***************************************** GESTION MOTEUR PHYSIQUE *****************************************
@@ -323,7 +342,7 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 		glColor3ub( C[i].color.R, C[i].color.G, C[i].color.B );
 		drawRect( *(C[i].bloc) );
 	}
-	printf( "\nPrevious:%f, Current:%f\n", scene->blocs[0].previousPos.x, scene->blocs[0].pos.x );
+	//printf( "\nPrevious:%f, Current:%f\n", scene->blocs[0].previousPos.x, scene->blocs[0].pos.x );
 	for ( i=0; i<scene->numberOfCharacters; i++ ) {
 		if ( C[i].isSelected ) {
 			glColor3ub( 230, 30, 30 );
@@ -334,9 +353,19 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 			};
 			drawRect( selector );
 		}
-		if ( C[i].parent!=NULL )
-			
+		
+		if ( C[i].parent!=NULL ) {
 			C[i].bloc->pos.x += ( C[i].parent->pos.x - C[i].parent->previousPos.x );
+			j = 0;
+			int collided = FALSE;
+			while ( !collided && j<scene->numberOfBlocs ) {
+				if ( j!=i && ( checkCollision( LEFT, *(C[i].bloc), B[j] ) || checkCollision( RIGHT, *(C[i].bloc), B[j] ) )) {
+					collided = TRUE;
+					C[i].bloc->pos.x = C[i].bloc->previousPos.x;
+				}
+				j++;
+			}
+		}
 	}
 	
 	
@@ -347,46 +376,53 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 	
 }
 
-
-
-
-
+void displayImage( GLuint textureId, Bloc screenRect ) {
+	glBindTexture( GL_TEXTURE_2D, textureId );
+	glBegin( GL_QUADS );
+		glColor3f( 1., 1., 1. );
+		
+		glTexCoord2f( 0., 1. );
+		glVertex2f( screenRect.pos.x, screenRect.pos.y );
+		
+		glTexCoord2f( 1., 1. );
+		glVertex2f( screenRect.pos.x + screenRect.size.x, screenRect.pos.y );
+		
+		glTexCoord2f( 1., 0. );
+		glVertex2f( screenRect.pos.x + screenRect.size.x, screenRect.pos.y + screenRect.size.y );
+		
+		glTexCoord2f( 0., 0. );
+		glVertex2f( screenRect.pos.x, screenRect.pos.y + screenRect.size.y );
+	glEnd();
+	glBindTexture( GL_TEXTURE_2D, 0 );
+}
 
 int main() {
 	
 	SDL_Init( SDL_INIT_VIDEO );
-	TTF_Init();
 	
 	//Variables Techniques
 	unsigned int windowWidth  = 800;
 	unsigned int windowHeight = 500;
-	TTF_Font * font = NULL;
-	SDL_Color fontColor = { 0, 0, 0 };
-	SDL_Surface * textSurface = NULL, * mainScreen = NULL;
-	SDL_Rect textRect, textRect_copy;
-	Uint8 * key = SDL_GetKeyState(NULL);
-	
-	//Variables Gameplay
-	Controler controler = { 0, 0, 0, 0, 0, 0 };
-	Controler controlerPast = { 0, 0, 0, 0, 0, 0 };
-	Scene * scene = makeScene( 3, 3 );
-	
-	//Initialisation des variables Techniques
-	font = TTF_OpenFont( "fonts/lekton_regular.ttf", 16 );
-	textSurface = TTF_RenderText_Blended( font, "Thomas Was Alone, The Game", fontColor );
-	textRect.x = windowWidth / 2;	textRect.y = windowHeight /2;
-	textRect.w = textSurface->w;	textRect.h = textSurface->h;
-	
-	//Initialisation des variables Gamplay
-	initBlocs( scene );
-	initCharacters( scene );
 	
 	//Gestion Anti aliasing
 	SDL_GL_SetAttribute( SDL_GL_MULTISAMPLEBUFFERS, 1 );
 	SDL_GL_SetAttribute( SDL_GL_MULTISAMPLESAMPLES, 6 );
 	
-	mainScreen = SDL_SetVideoMode( windowWidth, windowHeight, 32, SDL_OPENGL );
+	SDL_SetVideoMode( windowWidth, windowHeight, 32, SDL_OPENGL );
 	SDL_WM_SetCaption("Thomas Was Alone V2.0", NULL);
+	
+	//Variables Gameplay
+	Uint8 * key = SDL_GetKeyState(NULL);
+	Controler controler = { 0, 0, 0, 0, 0, 0 };
+	Controler controlerPast = { 0, 0, 0, 0, 0, 0 };
+	Scene * scene = makeScene( 3, 3 );
+	
+	//Initialisation de la scène
+	initBlocs( scene );
+	initCharacters( scene );
+	
+	//Initialisation des textures
+	GLuint background = makeImage( "img/back1.jpg" );
 	
 	//Gestion matrice d'affichage
 	glViewport( 0, 0, windowWidth, windowHeight );
@@ -402,10 +438,16 @@ int main() {
 		
 		glClearColor( 0.95f, 0.85f, 0.85f, 1.0f );
 		glClear( GL_COLOR_BUFFER_BIT );
+		glEnable( GL_TEXTURE_2D );
 		glMatrixMode( GL_MODELVIEW );
 		glLoadIdentity();
 		
 		/////////////////////////////////////* DEBUT DESSIN *///////////////////////////////////////
+		displayImage( background, (Bloc) {
+				(Vector) { -80, -50 },
+				(Vector) { 0, 0 },
+				(Vector) { 160, 100 }
+			});
 		
 		glRotatef( -1, 0.0, 0.0, 1.0 );
 		
@@ -413,19 +455,9 @@ int main() {
 		displayPlatforms( scene );
 		displayCharacters( scene, &controler );
 		
-		
-
-
-		/* NON FONCTIONNEL 
-		textRect_copy = textRect;
-		printf( "X:%d, Y:%d, W:%d, H:%d\n", textRect_copy.x, textRect_copy.y, textRect_copy.w, textRect_copy.h );
-		int error = SDL_BlitSurface( textSurface, NULL, mainScreen, &textRect_copy );
-		*/
-		
-		
-		
 		//////////////////////////////////////* FIN DESSIN *////////////////////////////////////////
 		
+		glDisable( GL_TEXTURE_2D );
 		SDL_GL_SwapBuffers();
 		
 		SDL_Event e;
@@ -441,15 +473,15 @@ int main() {
 	      SDL_Delay(FRAMERATE_MILLISECONDS - elapsedTime);
 	}
 	
+	//Fermeture des textures
+	glDeleteTextures( 1, &background );
+	
 	//Fermeture des variables GamePlay
 	free( scene->blocs );
 	free( scene->characters );
 	free( scene );
 	
 	//Fermeture des variables Techniques
-	SDL_FreeSurface( textSurface );
-	TTF_CloseFont( font );
-	TTF_Quit();
 	SDL_Quit();
 	return EXIT_SUCCESS;
 }
