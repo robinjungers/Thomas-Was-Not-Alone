@@ -10,9 +10,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 //Constantes
-#define GRAVITY 0.06
+#define GRAVITY 0.07
 #define STEP 1.0
 #define TRUE 1
 #define FALSE 0
@@ -22,13 +23,16 @@
 #define DOWN 2
 #define LEFT 3
 
+#define MAX_BLOC_NUMBER 50
+#define MAX_CHARACTER_NUMBER 3
+
 typedef struct Vector {
 	float x;
 	float y;
 } Vector;
 
 typedef struct Color {
-	char R, G, B;
+	unsigned char R, G, B;
 } Color;
 
 typedef struct Bloc {
@@ -58,56 +62,43 @@ typedef struct Scene {
 } Scene;
 
 typedef struct Controler {
-	char right, left, up, down;
-	char click;
-	char tab;
+	int right, left, up, down;
+	int click;
+	int tab;
 } Controler;
+
+typedef struct Camera {
+	Vector pos;
+	Vector posToReach;
+	float zoom;
+} Camera;
 
 static const Uint32 FRAMERATE_MILLISECONDS = 1000 / 60;
 
-void getControls( Controler * controler, Controler * controlerPast, Uint8 * key, size_t numberOfCharacters ) {
-	controler->right = key[SDLK_RIGHT];
-	controler->left = key[SDLK_LEFT];
-	controler->up = key[SDLK_UP];
-	if ( key[SDLK_TAB] &&  controler->tab==controlerPast->tab )
-		controler->tab = (controler->tab + 1) % numberOfCharacters;
-	
-	if ( !key[SDLK_TAB] )
-		*controlerPast = *controler;
+void easeValue( float * base, float target, float step ) {
+	if ( *base < target )
+		*base += floor(pow( target - *base, step ));
+	else if ( *base > target )
+		*base -= floor(pow( *base - target, step ));
 }
 
-void ease( float * base, float target, float step ) {
-	if ( *base < target )
-		*base += pow( *base - target, step );
-	else if ( *base < target )
-		*base -= pow( *base - target, step );
+void easeVector( Vector * base, Vector target, float step ) {
+	easeValue( &(base->x), target.x, step );
+	easeValue( &(base->y), target.y, step );
 }
 
 float dist( Vector A, Vector B ) {
 	return sqrt( pow( A.x-B.x, 2 ) + pow( A.y-B.y, 2 ) );
 }
 
-void drawRect( Bloc bloc ) {
-	glPushMatrix();
-		glTranslatef( bloc.pos.x, bloc.pos.y, 0.0 );
-		glBegin( GL_QUADS );
-			glVertex2f( 0, 0 );
-			glVertex2f( bloc.size.x, 0 );
-			glVertex2f( bloc.size.x, bloc.size.y );
-			glVertex2f( 0, bloc.size.y );
-		glEnd();
-	glPopMatrix();
-}
-
-Scene * makeScene( int nbPlatforms, int nbCharacters ) {
+Scene * makeScene() {
 	Scene * scene = (Scene*) calloc( 1, sizeof(Scene));
 	
-	scene->numberOfBlocs = nbCharacters + nbPlatforms;
-	scene->numberOfCharacters = nbCharacters;
-	scene->numberOfPlatforms = nbPlatforms;
+	scene->numberOfCharacters = 0;
+	scene->numberOfPlatforms = 0;
 	
-	scene->blocs = (Bloc*) calloc( scene->numberOfBlocs, sizeof(Bloc) );
-	scene->characters = (Character*) calloc( scene->numberOfCharacters, sizeof(Character) );
+	scene->blocs = (Bloc*) calloc( MAX_BLOC_NUMBER, sizeof(Bloc) );
+	scene->characters = (Character*) calloc( MAX_CHARACTER_NUMBER, sizeof(Character) );
 	
 	return scene;
 }
@@ -146,6 +137,48 @@ GLuint makeImage( const char * filename ) {
 	return textureId;
 }
 
+Camera * makeCamera() {
+	Camera * camera = (Camera *) calloc( 1, sizeof(Camera) );
+	
+	camera->pos = (Vector) { 0.0, 0.0 };
+	camera->posToReach = camera->pos;
+	camera->zoom = 1.0;
+	
+	return camera;
+}
+
+void drawRect( Bloc bloc ) {
+	glPushMatrix();
+		glTranslatef( bloc.pos.x, bloc.pos.y, 0.0 );
+		glBegin( GL_QUADS );
+			glVertex2f( 0, 0 );
+			glVertex2f( bloc.size.x, 0 );
+			glVertex2f( bloc.size.x, bloc.size.y );
+			glVertex2f( 0, bloc.size.y );
+		glEnd();
+	glPopMatrix();
+}
+
+void drawImage( GLuint textureId, Bloc screenRect ) {
+	glBindTexture( GL_TEXTURE_2D, textureId );
+	glBegin( GL_QUADS );
+		glColor3f( 1., 1., 1. );
+		
+		glTexCoord2f( 0., 1. );
+		glVertex2f( screenRect.pos.x, screenRect.pos.y );
+		
+		glTexCoord2f( 1., 1. );
+		glVertex2f( screenRect.pos.x + screenRect.size.x, screenRect.pos.y );
+		
+		glTexCoord2f( 1., 0. );
+		glVertex2f( screenRect.pos.x + screenRect.size.x, screenRect.pos.y + screenRect.size.y );
+		
+		glTexCoord2f( 0., 0. );
+		glVertex2f( screenRect.pos.x, screenRect.pos.y + screenRect.size.y );
+	glEnd();
+	glBindTexture( GL_TEXTURE_2D, 0 );
+}
+
 int checkCollision( int side, Bloc obj, Bloc ref ) {
 	switch (side) {
 		case UP:
@@ -172,79 +205,155 @@ int checkCollision( int side, Bloc obj, Bloc ref ) {
 	return FALSE;
 }
 
-void initBlocs( Scene * scene ) {
+int initBlocsFromFile( Scene * scene, const char * filename ) {
 	int i;
 	//Remplissage des personnages
-	i = 0;
-	scene->blocs[i].pos = (Vector) { 0.0, 30.0 };
-	scene->blocs[i].previousPos = scene->blocs[i].pos;
-	scene->blocs[i].size = (Vector) { 2.0, 10.0 };
+    FILE * file = fopen ( filename, "r" );
+    char tmp[10];
+    int currentTmp = 0;
+	int currentParameter = 0, currentIndex = 0;
+    int c;
+
+    if ( file==NULL )
+		return EXIT_FAILURE;
 	
-	i = 1;
-	scene->blocs[i].pos = (Vector) { -30.0, 30.0 };
-	scene->blocs[i].previousPos = scene->blocs[i].pos;
-	scene->blocs[i].size = (Vector) { 6.0, 6.0 };
+	scene->numberOfBlocs = 0;
 	
-	i = 2;
-	scene->blocs[i].pos = (Vector) { 30.0, 30.0 };
-	scene->blocs[i].previousPos = scene->blocs[i].pos;
-	scene->blocs[i].size= (Vector) { 4.0, 8.0 };
+	printf( "\n----- Reading Blocs File : -----\n\n" );
 	
-	//Remplissage du terrain
-	i = 3;
-	scene->blocs[i].pos = (Vector) { -50.0, -30.0 };
-	scene->blocs[i].previousPos = scene->blocs[i].pos;
-	scene->blocs[i].size = (Vector) { 100.0, 20.0 };
+    do {
+		// Récupération du prochain caractère du fichier dans la mémoire tempon
+		c = fgetc( file );
+		if ( c == ',' || c == ';' ) {
+			// Ajout du paramètre courant
+			switch (currentParameter) {
+				case 0:
+				scene->blocs[currentIndex].pos.x = atof(tmp);
+				break;
+				
+				case 1:
+				scene->blocs[currentIndex].pos.y = atof(tmp);
+				break;
+				
+				case 2:
+				scene->blocs[currentIndex].size.x = atof(tmp);
+				break;
+				
+				case 3:
+				scene->blocs[currentIndex].size.y = atof(tmp);
+				break;
+			}
+			currentParameter++;
+			
+			// RàZ du tampon
+			currentTmp = 0;
+			memset( tmp, 0, sizeof tmp );
+		} else if( (c == '\n') || (c == EOF) ) {
+			// Finalisation du bloc courant
+			scene->numberOfBlocs++;
+			scene->blocs[currentIndex].previousPos = scene->blocs[currentIndex].pos;
+			printf( "New bloc: pos( %f, %f ), size( %f, %f )\n",
+					scene->blocs[currentIndex].pos.x, scene->blocs[currentIndex].pos.y,
+					scene->blocs[currentIndex].size.x, scene->blocs[currentIndex].size.y );
+			
+			// Retour au premier paramètre
+			currentParameter = 0;
+			currentIndex++;
+			
+			// RàZ du tampon
+			currentTmp = 0;
+			memset( tmp, 0, sizeof tmp );
+		} else {
+			if ( currentTmp > 8 ) // Pour ne pas dépasser la taille maximale du tampon
+				return EXIT_FAILURE;
+			tmp[currentTmp++] = c;
+		}
+    } while ( c != EOF && currentIndex<MAX_BLOC_NUMBER );
 	
-	i = 4;
-	scene->blocs[i].pos = (Vector) { 20.0, -20.0 };
-	scene->blocs[i].previousPos = scene->blocs[i].pos;
-	scene->blocs[i].size = (Vector) { 20.0, 40.0 };
-	
-	i = 5;
-	scene->blocs[i].pos = (Vector) { -30.0, 0.0 };
-	scene->blocs[i].previousPos = scene->blocs[i].pos;
-	scene->blocs[i].size = (Vector) { 20.0, 20.0 };
+	fclose( file );
+	return EXIT_SUCCESS;
 }
 
-void initCharacters( Scene * scene ) {
+int initCharactersFromFile( Scene * scene, const char * filename ) {
 	int i;
-	//Remplissage de l'équipage
-	i = 0;
-	scene->characters[i].name = "Louise";
-	scene->characters[i].bloc = &scene->blocs[i];
-	scene->characters[i].vel = (Vector) { 0.0, 0.0 };
-	scene->characters[i].acc = (Vector) { 0.0, 0.0 };
-	scene->characters[i].color = (Color) { 200, 150, 150 };
-	scene->characters[i].isSelected = TRUE;
-	scene->characters[i].jumpPower = 2.0;
-	scene->characters[i].isOnGround = FALSE;
-	scene->characters[i].parent = NULL;
-	scene->characters[i].canJump = TRUE;
+	//Remplissage des personnages
+    FILE * file = fopen ( filename, "r" );
+    char tmp[10];
+    int currentTmp = 0;
+	int currentParameter = 0, currentIndex = 0;
+    int c;
+
+    if ( file==NULL )
+		return EXIT_FAILURE;
 	
-	i = 1;
-	scene->characters[i].name = "Nino";
-	scene->characters[i].bloc = &scene->blocs[i];
-	scene->characters[i].vel = (Vector) { 0.0, 0.0 };
-	scene->characters[i].acc = (Vector) { 0.0, 0.0 };
-	scene->characters[i].color = (Color) { 150, 110, 110 };
-	scene->characters[i].isSelected = FALSE;
-	scene->characters[i].jumpPower = 1.0;
-	scene->characters[i].isOnGround = FALSE;
-	scene->characters[i].parent = NULL;
-	scene->characters[i].canJump = TRUE;
+	scene->numberOfCharacters = 0;
 	
-	i = 2;
-	scene->characters[i].name = "Timour";
-	scene->characters[i].bloc = &scene->blocs[i];
-	scene->characters[i].vel = (Vector) { 0.0, 0.0 };
-	scene->characters[i].acc = (Vector) { 0.0, 0.0 };
-	scene->characters[i].color = (Color) { 220, 190, 190 };
-	scene->characters[i].isSelected = FALSE;
-	scene->characters[i].jumpPower = 1.5;
-	scene->characters[i].isOnGround = FALSE;
-	scene->characters[i].parent = NULL;
-	scene->characters[i].canJump = TRUE;
+	printf( "\n----- Reading Characters File : -----\n\n" );
+	
+    do {
+		// Récupération du prochain caractère du fichier dans la mémoire tempon
+		c = fgetc( file );
+		if ( c == ',' || c == ';' ) {
+			// Ajout du paramètre courant
+			//printf( "Found value: %f\n", atof(tmp) );
+			switch (currentParameter) {
+				case 0:
+				scene->characters[currentIndex].name = tmp;
+				break;
+				
+				case 1:
+				scene->characters[currentIndex].color.R = atoi(tmp);
+				break;
+				
+				case 2:
+				scene->characters[currentIndex].color.G = atoi(tmp);
+				break;
+				
+				case 3:
+				scene->characters[currentIndex].color.B = atoi(tmp);
+				break;
+				
+				case 4:
+				scene->characters[currentIndex].jumpPower = atof(tmp);
+				break;
+			}
+			currentParameter++;
+			
+			// RàZ du tampon
+			currentTmp = 0;
+			memset( tmp, 0, sizeof tmp );
+		} else if( (c == '\n') || (c == EOF) ) {
+			// Finalisation du bloc courant
+			scene->numberOfCharacters++;
+			scene->characters[currentIndex].bloc = &(scene->blocs[currentIndex]);
+			scene->characters[currentIndex].vel = (Vector) { 0.0, 0.0 };
+			scene->characters[currentIndex].acc = (Vector) { 0.0, 0.0 };
+			scene->characters[currentIndex].isSelected = FALSE;
+			scene->characters[currentIndex].parent = NULL;
+			scene->characters[currentIndex].canJump = TRUE;
+			printf( "New Character: name( %s ), color( %u, %u, %u ), jump( %.2f )\n",
+					scene->characters[currentIndex].name,
+					scene->characters[currentIndex].color.R, scene->characters[currentIndex].color.G, scene->characters[currentIndex].color.B,
+					scene->characters[currentIndex].jumpPower );
+			
+			// Retour au premier paramètre
+			currentParameter = 0;
+			currentIndex++;
+			
+			// RàZ du tampon
+			currentTmp = 0;
+			memset( tmp, 0, sizeof tmp );
+		} else {
+			if ( currentTmp > 8 ) // Pour ne pas dépasser la taille maximale du tampon
+				return EXIT_FAILURE;
+			tmp[currentTmp++] = c;
+		}
+    } while ( c != EOF && currentIndex<MAX_CHARACTER_NUMBER );
+	
+	scene->characters[0].isSelected = TRUE;
+	
+	fclose( file );
+	return EXIT_SUCCESS;
 }
 
 void displayPlatforms( Scene * scene ) {
@@ -255,7 +364,7 @@ void displayPlatforms( Scene * scene ) {
 		drawRect( scene->blocs[i] );
 }
 
-void displayCharacters( Scene * scene, Controler * controler ) {
+void displayCharacters( Scene * scene, Controler controler ) {
 	
 // ********************************************** INITIALISATION *********************************************
 	int i, j;
@@ -266,7 +375,7 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 	for ( i=0; i<scene->numberOfCharacters; i++ ) {
 		
 // ******************************************** GESTION SELECTEUR ********************************************
-		if ( controler->tab == i )
+		if ( controler.tab == i )
 			C[i].isSelected = TRUE;
 		else
 			C[i].isSelected = FALSE;
@@ -275,9 +384,9 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 		if ( C[i].isSelected ) {
 
 // ******************************************** GESTION COMMANDES ********************************************
-			if ( controler->right )
+			if ( controler.right )
 				C[i].bloc->pos.x += STEP;
-			if ( controler->left )
+			if ( controler.left )
 				C[i].bloc->pos.x -= STEP;	
 			
 			j = 0;
@@ -292,7 +401,7 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 			
 			
 // ****************************************** GESTION COMMANDE HAUT ******************************************
-			if ( controler->up && C[i].isOnGround ) {
+			if ( controler.up && C[i].isOnGround ) {
 				C[i].isOnGround = FALSE;
 				C[i].vel.y = C[i].jumpPower;
 			}
@@ -376,24 +485,28 @@ void displayCharacters( Scene * scene, Controler * controler ) {
 	
 }
 
-void displayImage( GLuint textureId, Bloc screenRect ) {
-	glBindTexture( GL_TEXTURE_2D, textureId );
-	glBegin( GL_QUADS );
-		glColor3f( 1., 1., 1. );
+void getControls( Controler * controler, Controler * controlerPast, Uint8 * key, size_t numberOfCharacters ) {
+	controler->right = key[SDLK_RIGHT];
+	controler->left = key[SDLK_LEFT];
+	controler->up = key[SDLK_UP];
+	if ( key[SDLK_TAB] &&  controler->tab==controlerPast->tab )
+		controler->tab = (controler->tab + 1) % numberOfCharacters;
+	
+	if ( !key[SDLK_TAB] )
+		*controlerPast = *controler;
+}
+
+void updateCamera( Camera * camera, Scene * scene ) {
+	int i;
+	for ( i=0; i<scene->numberOfCharacters; i++ ) {
+		if ( scene->characters[i].isSelected ) {
+			if ( dist(camera->pos, scene->characters[i].bloc->pos) > 50 )
+				camera->posToReach = scene->characters[i].bloc->pos;
+		}
+	}
 		
-		glTexCoord2f( 0., 1. );
-		glVertex2f( screenRect.pos.x, screenRect.pos.y );
-		
-		glTexCoord2f( 1., 1. );
-		glVertex2f( screenRect.pos.x + screenRect.size.x, screenRect.pos.y );
-		
-		glTexCoord2f( 1., 0. );
-		glVertex2f( screenRect.pos.x + screenRect.size.x, screenRect.pos.y + screenRect.size.y );
-		
-		glTexCoord2f( 0., 0. );
-		glVertex2f( screenRect.pos.x, screenRect.pos.y + screenRect.size.y );
-	glEnd();
-	glBindTexture( GL_TEXTURE_2D, 0 );
+	//if ( dist(camera->pos, camera->posToReach) > 50 )
+	easeVector( &(camera->pos), camera->posToReach, 0.3 );
 }
 
 int main() {
@@ -415,11 +528,13 @@ int main() {
 	Uint8 * key = SDL_GetKeyState(NULL);
 	Controler controler = { 0, 0, 0, 0, 0, 0 };
 	Controler controlerPast = { 0, 0, 0, 0, 0, 0 };
-	Scene * scene = makeScene( 3, 3 );
+	Scene * scene = makeScene();
+	Camera * camera = makeCamera();
 	
 	//Initialisation de la scène
-	initBlocs( scene );
-	initCharacters( scene );
+	initBlocsFromFile( scene, "data/blocs2.txt" );
+	initCharactersFromFile( scene, "data/characters.txt" );
+	scene->numberOfPlatforms = scene->numberOfBlocs - scene->numberOfCharacters;
 	
 	//Initialisation des textures
 	GLuint background = makeImage( "img/back1.jpg" );
@@ -443,18 +558,23 @@ int main() {
 		glLoadIdentity();
 		
 		/////////////////////////////////////* DEBUT DESSIN *///////////////////////////////////////
-		displayImage( background, (Bloc) {
+		//glPushMatrix();
+		
+		drawImage( background, (Bloc) {
 				(Vector) { -80, -50 },
 				(Vector) { 0, 0 },
 				(Vector) { 160, 100 }
 			});
 		
-		glRotatef( -1, 0.0, 0.0, 1.0 );
+		updateCamera( camera, scene );
+		glTranslatef( -camera->pos.x, -camera->pos.y, 0.0 );
 		
 		getControls( &controler, &controlerPast, key, scene->numberOfCharacters );
 		displayPlatforms( scene );
-		displayCharacters( scene, &controler );
+		displayCharacters( scene, controler );
 		
+		
+		//glPopMatrix();
 		//////////////////////////////////////* FIN DESSIN *////////////////////////////////////////
 		
 		glDisable( GL_TEXTURE_2D );
