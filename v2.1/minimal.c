@@ -58,7 +58,7 @@ typedef struct Scene {
 	Character * characters;
 	size_t numberOfBlocs;
 	size_t numberOfCharacters;
-	size_t numberOfPlatforms;
+	Vector minDimension, maxDimension;
 } Scene;
 
 typedef struct Controler {
@@ -87,15 +87,16 @@ void easeVector( Vector * base, Vector target, float step ) {
 	easeValue( &(base->y), target.y, step );
 }
 
+float mapValue( float value, float a, float b, float c, float d ) {
+	return c + (d - c) * (value - a)/(b - a);
+}
+
 float dist( Vector A, Vector B ) {
 	return sqrt( pow( A.x-B.x, 2 ) + pow( A.y-B.y, 2 ) );
 }
 
 Scene * makeScene() {
 	Scene * scene = (Scene*) calloc( 1, sizeof(Scene));
-	
-	scene->numberOfCharacters = 0;
-	scene->numberOfPlatforms = 0;
 	
 	scene->blocs = (Bloc*) calloc( MAX_BLOC_NUMBER, sizeof(Bloc) );
 	scene->characters = (Character*) calloc( MAX_CHARACTER_NUMBER, sizeof(Character) );
@@ -206,7 +207,6 @@ int checkCollision( int side, Bloc obj, Bloc ref ) {
 }
 
 int initBlocsFromFile( Scene * scene, const char * filename ) {
-	int i;
 	//Remplissage des personnages
     FILE * file = fopen ( filename, "r" );
     char tmp[10];
@@ -275,7 +275,6 @@ int initBlocsFromFile( Scene * scene, const char * filename ) {
 }
 
 int initCharactersFromFile( Scene * scene, const char * filename ) {
-	int i;
 	//Remplissage des personnages
     FILE * file = fopen ( filename, "r" );
     char tmp[10];
@@ -354,6 +353,25 @@ int initCharactersFromFile( Scene * scene, const char * filename ) {
 	
 	fclose( file );
 	return EXIT_SUCCESS;
+}
+
+void getSceneDimensions( Scene * scene ) {
+	int i;
+	scene->maxDimension = (Vector) { -100000, -100000 };
+	scene->minDimension = (Vector) { 100000, 100000 };
+	
+	for ( i=0; i<scene->numberOfBlocs; i++ ) {
+		if (scene->blocs[i].pos.x + scene->blocs[i].size.x > scene->maxDimension.x)
+			scene->maxDimension.x = scene->blocs[i].pos.x + scene->blocs[i].size.x;
+		if (scene->blocs[i].pos.y + scene->blocs[i].size.y > scene->maxDimension.y)
+			scene->maxDimension.y = scene->blocs[i].pos.y + scene->blocs[i].size.y;
+		if (scene->blocs[i].pos.x < scene->minDimension.x)
+			scene->minDimension.x = scene->blocs[i].pos.x;
+		if (scene->blocs[i].pos.y < scene->minDimension.y)
+			scene->minDimension.y = scene->blocs[i].pos.y;
+	}
+	
+	printf( "\nScene dimensions: %f, %f\n", scene->maxDimension.x - scene->minDimension.x, scene->maxDimension.y - scene->minDimension.y );
 }
 
 void displayPlatforms( Scene * scene ) {
@@ -500,13 +518,16 @@ void updateCamera( Camera * camera, Scene * scene ) {
 	int i;
 	for ( i=0; i<scene->numberOfCharacters; i++ ) {
 		if ( scene->characters[i].isSelected ) {
-			if ( dist(camera->pos, scene->characters[i].bloc->pos) > 50 )
-				camera->posToReach = scene->characters[i].bloc->pos;
+			camera->pos.x = mapValue( scene->characters[i].bloc->pos.x,
+				 					  scene->minDimension.x, scene->maxDimension.x,
+									  scene->minDimension.x + 70, scene->maxDimension.x - 70 );
+			camera->pos.y = mapValue( scene->characters[i].bloc->pos.y,
+								 	  scene->minDimension.y, scene->maxDimension.y,
+								 	  scene->minDimension.y + 40, scene->maxDimension.y - 40 );
 		}
 	}
-		
-	//if ( dist(camera->pos, camera->posToReach) > 50 )
-	easeVector( &(camera->pos), camera->posToReach, 0.3 );
+	camera->zoom = 0.9;
+	//easeVector( &(camera->pos), camera->posToReach, 0.2 );
 }
 
 int main() {
@@ -534,7 +555,7 @@ int main() {
 	//Initialisation de la scène
 	initBlocsFromFile( scene, "data/blocs2.txt" );
 	initCharactersFromFile( scene, "data/characters.txt" );
-	scene->numberOfPlatforms = scene->numberOfBlocs - scene->numberOfCharacters;
+	getSceneDimensions( scene );
 	
 	//Initialisation des textures
 	GLuint background = makeImage( "img/back1.jpg" );
@@ -558,7 +579,6 @@ int main() {
 		glLoadIdentity();
 		
 		/////////////////////////////////////* DEBUT DESSIN *///////////////////////////////////////
-		//glPushMatrix();
 		
 		drawImage( background, (Bloc) {
 				(Vector) { -80, -50 },
@@ -567,14 +587,15 @@ int main() {
 			});
 		
 		updateCamera( camera, scene );
+		
+		glRotatef( -1, 0.0, 0.0, 1.0 );
+		glScalef( camera->zoom, camera->zoom, camera->zoom );
 		glTranslatef( -camera->pos.x, -camera->pos.y, 0.0 );
 		
 		getControls( &controler, &controlerPast, key, scene->numberOfCharacters );
 		displayPlatforms( scene );
 		displayCharacters( scene, controler );
 		
-		
-		//glPopMatrix();
 		//////////////////////////////////////* FIN DESSIN *////////////////////////////////////////
 		
 		glDisable( GL_TEXTURE_2D );
