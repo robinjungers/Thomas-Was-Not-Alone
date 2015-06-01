@@ -1,5 +1,6 @@
 #include <SDL/SDL.h>
 #include <SDL/SDL_image.h>
+#include <SDL/SDL_mixer.h>
 #ifdef __APPLE__
 	#include <OpenGL/gl.h>
 	#include <OpenGL/glu.h>
@@ -57,7 +58,6 @@ typedef struct Character {
 	float jumpPower;
 	int isSelected;
 	int isOnGround;
-	int canJump;
 } Character;
 
 typedef struct Scene {
@@ -86,7 +86,16 @@ typedef struct Menu {
 	Image * images;
 } Menu;
 
+typedef struct SoundFX {
+	Mix_Chunk * loop;
+	Mix_Chunk * jump;
+	Mix_Chunk * menuChange;
+	Mix_Chunk * menuSelection;
+} SoundFX;
+
 static const Uint32 FRAMERATE_MILLISECONDS = 1000 / 60;
+static GLfloat R = 1.0, G = 1.0, B = 1.0; A = 1.0;
+static int time = 0;
 
 void easeValue( float * base, float target, float step ) {
 	if ( *base < target )
@@ -219,6 +228,17 @@ Menu * makeMenu( const char * filename0, const char * filename1, const char * fi
 	return menu;
 }
 
+SoundFX * makeSoundFX() {
+	SoundFX * soundFX = (SoundFX *) calloc( 1, sizeof(SoundFX) );
+	
+	soundFX->loop = Mix_LoadWAV( "sound/FlamingDeserts.wav" );
+	soundFX->jump = Mix_LoadWAV( "sound/jump.wav" );
+	soundFX->menuChange = Mix_LoadWAV( "sound/MenuChange.wav" );
+	soundFX->menuSelection = Mix_LoadWAV( "sound/MenuSelection.wav" );
+	
+	return soundFX;
+}
+
 void drawRect( Bloc bloc ) {
 	glPushMatrix();
 		glTranslatef( bloc.pos.x, bloc.pos.y, 0.0 );
@@ -342,7 +362,7 @@ int initBlocsFromFile( Scene * scene, const char * filename ) {
 			scene->numberOfBlocs++;
 			scene->blocs[currentIndex].previousPos = scene->blocs[currentIndex].pos;
 			scene->blocs[currentIndex].parent = NULL;
-			printf( "New bloc: pos( %f, %f ), size( %f, %f )\n",
+			printf( "New bloc: pos( %.1f, %.1f ), size( %.1f, %.1f )\n",
 					scene->blocs[currentIndex].pos.x, scene->blocs[currentIndex].pos.y,
 					scene->blocs[currentIndex].size.x, scene->blocs[currentIndex].size.y );
 			
@@ -422,11 +442,10 @@ int initCharactersFromFile( Scene * scene, const char * filename ) {
 			// Finalisation du bloc courant
 			scene->numberOfCharacters++;
 			scene->characters[currentIndex].bloc = &(scene->blocs[currentIndex]);
-			scene->characters[currentIndex].vel = (Vector) { 0.0, 0.0 };
-			scene->characters[currentIndex].acc = (Vector) { 0.0, 0.0 };
+			scene->characters[currentIndex].vel = vector( 0.0, 0.0 );
+			scene->characters[currentIndex].acc = vector( 0.0, 0.0 );
 			scene->characters[currentIndex].isSelected = FALSE;
-			scene->characters[currentIndex].canJump = TRUE;
-			printf( "New Character: name( %s ), color( %u, %u, %u ), jump( %.2f )\n",
+			printf( "New Character: name( %s ), color( %u, %u, %u ), jump( %.1f )\n",
 					scene->characters[currentIndex].name,
 					scene->characters[currentIndex].color.R, scene->characters[currentIndex].color.G, scene->characters[currentIndex].color.B,
 					scene->characters[currentIndex].jumpPower );
@@ -467,7 +486,7 @@ void getSceneDimensions( Scene * scene ) {
 			scene->minDimension.y = scene->blocs[i].pos.y;
 	}
 	
-	printf( "\nScene dimensions: %f, %f\n", scene->maxDimension.x - scene->minDimension.x, scene->maxDimension.y - scene->minDimension.y );
+	printf( "\nScene dimensions: %.2f, %.2f\n", scene->maxDimension.x - scene->minDimension.x, scene->maxDimension.y - scene->minDimension.y );
 }
 
 void displayPlatforms( Scene * scene ) {
@@ -478,7 +497,7 @@ void displayPlatforms( Scene * scene ) {
 		drawRect( scene->blocs[i] );
 }
 
-void handleCharactersControls( Scene * scene, Controler * controler ) {
+void handleCharactersControls( Scene * scene, Controler * controler, SoundFX * soundFX ) {
 	int i, j;
 	Character * C = scene->characters;
 	Bloc * B = scene->blocs;
@@ -509,6 +528,7 @@ void handleCharactersControls( Scene * scene, Controler * controler ) {
 			if ( controler->up && C[i].isOnGround ) {
 				C[i].isOnGround = FALSE;
 				C[i].vel.y = C[i].jumpPower;
+				Mix_PlayChannel( 2, soundFX->jump, 0 );
 			}
 		}
 		
@@ -672,27 +692,44 @@ void updateCamera( Camera * camera, Scene * scene ) {
 	}
 }
 
-void handleMenuControls( Menu * menu, Controler * controler, Scene * scene ) {
-	if ( controler->up && menu->selectedLevel>0 )
+void handleMenuControls( Menu * menu, Controler * controler, Scene * scene, SoundFX * soundFX, Image * background0, Image * background1, Image * background2 ) {
+	if ( controler->up && menu->selectedLevel>0 ) {
+		Mix_PlayChannel( 1, soundFX->menuChange, 0 );
 		menu->selectedLevel--;
-	if ( controler->down && menu->selectedLevel<2 )
+	}
+	if ( controler->down && menu->selectedLevel<2 ) {
+		Mix_PlayChannel( 1, soundFX->menuChange, 0 );
 		menu->selectedLevel++;
+	}
 	
 	if ( controler->enter ) {
+		Mix_PlayChannel( 1, soundFX->menuSelection, 0 );
 		switch( menu->selectedLevel ) {
 			case 0:
 			initBlocsFromFile( scene, "data/blocs0.txt" );
 			initCharactersFromFile( scene, "data/characters0.txt" );
+			background0->texture = makeTexture( "img/backBrun0.png" );
+			background1->texture = makeTexture( "img/backBrun1.png" );
+			background2->texture = makeTexture( "img/backBrun2.png" );
+			R = 0.98;	G = 0.9;	B = 0.9;
 			break;
 			
 			case 1:
 			initBlocsFromFile( scene, "data/blocs1.txt" );
 			initCharactersFromFile( scene, "data/characters1.txt" );
+			background0->texture = makeTexture( "img/backBleu0.png" );
+			background1->texture = makeTexture( "img/backBleu1.png" );
+			background2->texture = makeTexture( "img/backBleu2.png" );
+			R = 0.9;	G = 0.93;	B = 0.98;
 			break;
 			
 			case 2:
 			initBlocsFromFile( scene, "data/blocs2.txt" );
 			initCharactersFromFile( scene, "data/characters2.txt" );
+			background0->texture = makeTexture( "img/backVert0.png" );
+			background1->texture = makeTexture( "img/backVert1.png" );
+			background2->texture = makeTexture( "img/backVert2.png" );
+			R = 0.9;	G = 0.98;	B = 0.9;
 			break;
 		}
 		getSceneDimensions( scene );
@@ -731,6 +768,10 @@ int main() {
 	SDL_SetVideoMode( windowWidth, windowHeight, 32, SDL_OPENGL );
 	SDL_WM_SetCaption("Thomas Was Alone", NULL);
 	
+	//Initilisation son
+	if ( Mix_OpenAudio( 44100, MIX_DEFAULT_FORMAT, MIX_DEFAULT_CHANNELS, 1024 ) == -1 ) printf( "%s", Mix_GetError() );
+	Mix_AllocateChannels( 3 );
+	
 	//Variables Gameplay
 	Uint8 * key = SDL_GetKeyState(NULL);
 	Controler * controler = makeControler();
@@ -738,11 +779,13 @@ int main() {
 	Scene * scene = makeScene();
 	Camera * camera = makeCamera();
 	Menu * menu = makeMenu( "img/menu0.png", "img/menu1.png", "img/menu2.png" );
+	SoundFX * soundFX = makeSoundFX();
+	Mix_PlayChannel( 0, soundFX->loop, -1 );
 	
 	//Initialisation des textures
-	Image * background0 = makeImage( "img/back_mono0.png", bloc( -100, -100, 256, 160 ) );
-	Image * background1 = makeImage( "img/back_mono1.png", bloc( -100, -100, 256, 160 ) );
-	Image * background2 = makeImage( "img/back_mono2.png", bloc( -100, -100, 256, 160 ) );
+	Image * background0 = makeImage( "img/backBrun0.png", bloc( -100.0, -100.0, 256.0, 160.0 ) );
+	Image * background1 = makeImage( "img/backBrun1.png", bloc( -100.0, -100.0, 256.0, 160.0 ) );
+	Image * background2 = makeImage( "img/backBrun2.png", bloc( -100.0, -100.0, 256.0, 160.0 ) );
 	
 	//Gestion matrice d'affichage
 	glViewport( 0, 0, windowWidth, windowHeight );
@@ -753,10 +796,11 @@ int main() {
 	
 	int loop = 1;
 	while (loop) {
+		time++;
 		Uint32 startTime = SDL_GetTicks();
 		key = SDL_GetKeyState(NULL);
 		
-		glClearColor( 0.95f, 0.85f, 0.85f, 1.0f );
+		glClearColor( R, G, B, A );
 		glClear( GL_COLOR_BUFFER_BIT );
 		glEnable( GL_TEXTURE_2D );
 		glEnable(GL_BLEND);
@@ -779,14 +823,14 @@ int main() {
 			drawImageParallax( background1, camera, 0.4 );
 			drawImageParallax( background2, camera, 0.6 );
 			
-			glRotatef( -1, 0.0, 0.0, 1.0 );
+			glRotatef( sin( 0.01*time ), 0.0, 0.0, 1.0 );
 			glScalef( camera->zoom, camera->zoom, camera->zoom );
 			glTranslatef( -camera->pos.x, -camera->pos.y, 0.0 );
 			
 			displayPlatforms( scene );
 			
 			if ( !menu->active ) {
-				handleCharactersControls( scene, controler );
+				handleCharactersControls( scene, controler, soundFX );
 				handleCharactersParenting( scene );
 			}
 
@@ -798,7 +842,7 @@ int main() {
 			menu->active = TRUE;
 		
 		if ( menu->active ) {
-			handleMenuControls( menu, controler, scene );
+			handleMenuControls( menu, controler, scene, soundFX, background0, background1, background2 );
 			displayMenu( menu, controler );
 		}
 		
@@ -820,8 +864,18 @@ int main() {
 	      SDL_Delay(FRAMERATE_MILLISECONDS - elapsedTime);
 	}
 	
+	printf( "\n----- Closing Game -----\n\n" );
+	
 	//Fermeture des textures
-	//glDeleteTextures( 1, background );
+	glDeleteTextures( 1, &(background0->texture) );
+	glDeleteTextures( 1, &(background1->texture) );
+	glDeleteTextures( 1, &(background2->texture) );
+	
+	//Fermeture du son
+	Mix_FreeChunk( soundFX->loop );
+	Mix_FreeChunk( soundFX->menuChange );
+	Mix_FreeChunk( soundFX->menuSelection );
+	Mix_CloseAudio();
 	
 	//Fermeture des variables GamePlay
 	free( scene->blocs );
@@ -832,6 +886,7 @@ int main() {
 	free( previousControler );
 	free( menu->images );
 	free( menu );
+	free( soundFX );
 	
 	//Fermeture des variables Techniques
 	SDL_Quit();

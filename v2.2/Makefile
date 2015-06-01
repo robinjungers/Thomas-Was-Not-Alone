@@ -1,6 +1,6 @@
 CC       =  gcc
 CFLAGS   = -Wall -O2 -g
-LIB      = -L/usr/local/lib -lSDL -lSDLmain -lSDL_image
+LIB      = -L/usr/local/lib -lSDL -lSDLmain -lSDL_image -lSDL_mixer
 INCLUDES = -I/usr/local/include -framework Cocoa -framework OpenGL
 
 OBJ      = minimal.o 
